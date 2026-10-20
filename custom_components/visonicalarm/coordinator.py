@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -24,13 +24,14 @@ from .const import (
     CONF_APP_ID,
     CONF_EVENT_HOUR_OFFSET,
     CONF_PANEL_ID,
+    CONF_SCAN_INTERVAL,
     CONF_USER_CODE,
     CONF_USER_EMAIL,
     CONF_USER_PASSWORD,
     DEFAULT_HOST,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     ISSUE_PANEL_OFFLINE,
-    SCAN_INTERVAL,
     SLOW_SCAN_INTERVAL,
     STATE_ALARM,
     STATE_ARMING,
@@ -55,7 +56,9 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=SCAN_INTERVAL,
+            update_interval=timedelta(
+                seconds=int(entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+            ),
             config_entry=entry,
         )
         self.api = VisonicApi(
@@ -71,6 +74,8 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
             CONF_EVENT_HOUR_OFFSET, entry.data.get(CONF_EVENT_HOUR_OFFSET, 0)
         )
         self._last_slow_update: datetime | None = None
+        # Set in async_setup_entry once the panel's device is registered.
+        self.panel_device_id: str | None = None
         self._data = VisonicData()
 
     @property
@@ -111,7 +116,7 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
             await self._async_update_fast()
 
             now = datetime.now(UTC)
-            if self._last_slow_update is None or now - self._last_slow_update >= SLOW_SCAN_INTERVAL:
+            if self._slow_update_due(now):
                 await self._async_update_slow()
                 self._last_slow_update = now
         except VisonicAuthError as err:
@@ -127,6 +132,20 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
             ) from err
 
         return self._data
+
+    def _slow_update_due(self, now: datetime) -> bool:
+        """Whether this cycle should also refresh the slow endpoints.
+
+        The slow set runs on the cycle nearest the five-minute mark rather than
+        the first one after it. Cycles are not exactly ``update_interval`` apart
+        (the scheduler truncates to the second and adds jitter), so with a long
+        poll interval "first cycle after" could land a whole cycle late, and at
+        300 s would refresh troubles every ten minutes instead of every five.
+        """
+        if self._last_slow_update is None:
+            return True
+        slack = (self.update_interval or timedelta()) / 2
+        return now - self._last_slow_update >= SLOW_SCAN_INTERVAL - slack
 
     async def _async_update_fast(self) -> None:
         """Refresh everything that changes with arm state."""

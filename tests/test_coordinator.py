@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -123,6 +123,35 @@ async def test_slow_endpoints_are_not_polled_every_cycle(
         async_fire_time_changed(hass)
         await hass.async_block_till_done()
         assert troubles.call_count >= 1
+
+
+@pytest.mark.parametrize(
+    ("interval", "elapsed", "due"),
+    [
+        # 10 s: unchanged in practice - the slow set runs on the 30th cycle.
+        (10, 200, False),
+        (10, 296, True),
+        # 300 s: a cycle that lands a second early must not push the slow set
+        # out to ten minutes.
+        (300, 299, True),
+        (60, 240, False),
+        (60, 271, True),
+    ],
+)
+async def test_slow_set_runs_on_the_cycle_nearest_five_minutes(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    interval: int,
+    elapsed: int,
+    due: bool,
+) -> None:
+    """Scheduler jitter must not delay the slow endpoints by a whole cycle."""
+    coordinator = setup_integration.runtime_data
+    coordinator.update_interval = timedelta(seconds=interval)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    coordinator._last_slow_update = start
+
+    assert coordinator._slow_update_due(start + timedelta(seconds=elapsed)) is due
 
 
 async def test_hour_offset_is_read_from_options(

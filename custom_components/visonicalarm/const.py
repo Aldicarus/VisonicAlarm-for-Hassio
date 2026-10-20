@@ -26,14 +26,21 @@ CONF_PANEL_ID: Final = "panel_id"
 CONF_PARTITION: Final = "partition"
 CONF_NO_PIN_REQUIRED: Final = "no_pin_required"
 CONF_EVENT_HOUR_OFFSET: Final = "event_hour_offset"
+CONF_SCAN_INTERVAL: Final = "scan_interval"
 
 DEFAULT_HOST: Final = "visonic.tycomonitor.com"
 DEFAULT_PARTITION: Final = "ALL"
 DEFAULT_NAME: Final = "Visonic Alarm"
 
-# The cloud reflects panel state within a few seconds; polling faster than this
-# gains nothing and the API is rate sensitive.
-SCAN_INTERVAL: Final = timedelta(seconds=10)
+# How often arm state, readiness and device state are polled, in seconds. Each
+# of these cycles is three requests (status, alarms, devices). The API is rate
+# sensitive, so new entries poll every 30 s; the option allows 10 to 300.
+DEFAULT_SCAN_INTERVAL: Final = 30
+MIN_SCAN_INTERVAL: Final = 10
+MAX_SCAN_INTERVAL: Final = 300
+# What every entry polled at before the interval was configurable. Entries
+# created before then are migrated to keep it, so an upgrade changes nothing.
+LEGACY_SCAN_INTERVAL: Final = 10
 # Troubles, events and the capability endpoints change rarely.
 SLOW_SCAN_INTERVAL: Final = timedelta(minutes=5)
 

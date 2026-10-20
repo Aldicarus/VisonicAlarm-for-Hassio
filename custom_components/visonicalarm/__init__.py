@@ -5,10 +5,17 @@ from __future__ import annotations
 import logging
 
 import homeassistant.helpers.config_validation as cv
-import voluptuous as vol
+
+try:
+    # Home Assistant 2026.10 replaced voluptuous with probatio, which keeps
+    # the same names. Older releases, which this still supports, lack it.
+    import probatio as vol
+except ImportError:  # pragma: no cover - Home Assistant before 2026.10
+    import voluptuous as vol  # type: ignore[no-redef]
 from homeassistant.config_entries import SOURCE_IMPORT
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 
@@ -18,6 +25,7 @@ from .const import (
     CONF_NO_PIN_REQUIRED,
     CONF_PANEL_ID,
     CONF_PARTITION,
+    CONF_SCAN_INTERVAL,
     CONF_USER_CODE,
     CONF_USER_EMAIL,
     CONF_USER_PASSWORD,
@@ -26,9 +34,11 @@ from .const import (
     DEFAULT_PARTITION,
     DOMAIN,
     ISSUE_YAML_DEPRECATED,
+    LEGACY_SCAN_INTERVAL,
     PLATFORMS,
 )
 from .coordinator import VisonicConfigEntry, VisonicDataUpdateCoordinator
+from .entity import panel_device_info
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,6 +101,31 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: VisonicConfigEntry) -> bool:
+    """Migrate an entry from an older config entry version.
+
+    1.1 -> 1.2: the poll interval became an option, and new entries default to
+    30 s. Entries made before that polled every 10 s, and automations may rely
+    on that speed, so they are given an explicit 10 s rather than inheriting
+    the new default. Nobody's polling changes on upgrade.
+    """
+    if entry.version > 1:
+        # A downgrade from a future major version. Refuse rather than guess.
+        return False
+
+    if entry.minor_version < 2:
+        options = {**entry.options}
+        options.setdefault(CONF_SCAN_INTERVAL, LEGACY_SCAN_INTERVAL)
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+        _LOGGER.debug(
+            "Migrated %s to 1.2, poll interval kept at %s s",
+            entry.title,
+            options[CONF_SCAN_INTERVAL],
+        )
+
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: VisonicConfigEntry) -> bool:
     """Set up Visonic Alarm from a config entry."""
     coordinator = VisonicDataUpdateCoordinator(hass, entry)
@@ -98,6 +133,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: VisonicConfigEntry) -> b
 
     # Per-entry state lives on the entry itself (quality scale: runtime-data).
     entry.runtime_data = coordinator
+
+    # The panel is registered before any platform, so each zone can name it by
+    # device id rather than by the via_device tuple Home Assistant deprecated.
+    panel = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, **panel_device_info(coordinator)
+    )
+    coordinator.panel_device_id = panel.id
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))

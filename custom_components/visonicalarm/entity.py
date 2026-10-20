@@ -11,7 +11,7 @@ is preserved deliberately — see :class:`VisonicLegacyZoneEntity`.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -103,6 +103,10 @@ class VisonicZoneEntity(VisonicEntity):
         return attrs
 
 
+# Home Assistant 2026.10 deprecated via_device for via_device_id.
+_HAS_VIA_DEVICE_ID = "via_device_id" in DeviceInfo.__annotations__
+
+
 def panel_device_info(coordinator: VisonicDataUpdateCoordinator) -> DeviceInfo:
     """Device entry representing the alarm panel itself."""
     data = coordinator.data
@@ -123,9 +127,8 @@ def zone_device_info(coordinator: VisonicDataUpdateCoordinator, device_id: int) 
     data = coordinator.data
     serial = data.serial or coordinator.config_entry.unique_id or DOMAIN
     device = data.device_by_id(device_id)
-    return DeviceInfo(
+    info = DeviceInfo(
         identifiers={(DOMAIN, f"{serial}_zone_{device_id}")},
-        via_device=(DOMAIN, str(serial)),
         manufacturer="Visonic",
         model=device.subtype if device else None,
         name=device.display_name if device else f"Zone {device_id}",
@@ -133,3 +136,10 @@ def zone_device_info(coordinator: VisonicDataUpdateCoordinator, device_id: int) 
         # serial number, and it is what an installer reads off the panel.
         serial_number=device.enrollment_id if device else None,
     )
+    if _HAS_VIA_DEVICE_ID and coordinator.panel_device_id:
+        info["via_device_id"] = coordinator.panel_device_id
+    else:
+        # Home Assistant before via_device_id: link by the panel's identifier.
+        # Deprecated from 2026.10 (removed 2027.8), hence the cast.
+        cast(dict[str, Any], info)["via_device"] = (DOMAIN, str(serial))
+    return info

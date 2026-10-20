@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.config_entries import SOURCE_IMPORT, SOURCE_USER
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.visonicalarm.api import (
@@ -21,10 +22,13 @@ from custom_components.visonicalarm.const import (
     CONF_EVENT_HOUR_OFFSET,
     CONF_NO_PIN_REQUIRED,
     CONF_PANEL_ID,
+    CONF_SCAN_INTERVAL,
     CONF_USER_CODE,
     CONF_USER_EMAIL,
     CONF_USER_PASSWORD,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    LEGACY_SCAN_INTERVAL,
 )
 
 from .conftest import ENTRY_DATA, FakeApi
@@ -54,6 +58,10 @@ async def test_user_flow_creates_entry(
     assert result["result"].unique_id == "ABC123"
     # A blank app id is filled in rather than rejected.
     assert result["data"][CONF_APP_ID]
+    # New entries are born current, so they never take the 10 s migration path
+    # and pick up the 30 s default instead.
+    assert result["result"].minor_version == 2
+    assert CONF_SCAN_INTERVAL not in result["result"].options
 
 
 @pytest.mark.parametrize(
@@ -108,6 +116,8 @@ async def test_import_from_yaml(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"][CONF_NO_PIN_REQUIRED] is True
     assert result["options"][CONF_EVENT_HOUR_OFFSET] == 2
+    # A YAML setup is an upgrade from the 10 s era, so it keeps that speed.
+    assert result["options"][CONF_SCAN_INTERVAL] == LEGACY_SCAN_INTERVAL
 
 
 async def test_import_aborts_on_bad_credentials(hass: HomeAssistant, fake_api: FakeApi) -> None:
@@ -193,3 +203,58 @@ async def test_options_flow(hass: HomeAssistant, setup_integration: MockConfigEn
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert setup_integration.options[CONF_NO_PIN_REQUIRED] is True
+    # Left untouched, the poll interval is saved at the default.
+    assert setup_integration.options[CONF_SCAN_INTERVAL] == DEFAULT_SCAN_INTERVAL
+
+
+async def test_options_flow_offers_the_current_interval(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    """The form is pre-filled with the default when no interval is stored."""
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    schema = result["data_schema"].schema
+    key = next(k for k in schema if k == CONF_SCAN_INTERVAL)
+    assert key.default() == DEFAULT_SCAN_INTERVAL
+
+
+async def test_options_flow_sets_poll_interval(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    """A new interval is stored as whole seconds and reaches the coordinator."""
+    assert setup_integration.runtime_data.update_interval == timedelta(
+        seconds=DEFAULT_SCAN_INTERVAL
+    )
+
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_NO_PIN_REQUIRED: False, CONF_EVENT_HOUR_OFFSET: 0, CONF_SCAN_INTERVAL: 120.0},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    stored = setup_integration.options[CONF_SCAN_INTERVAL]
+    assert stored == 120
+    assert isinstance(stored, int)
+    # The update listener reloads the entry, so the running coordinator is new
+    # and polls at the new interval without a restart.
+    assert setup_integration.runtime_data.update_interval == timedelta(seconds=120)
+
+    # The form now offers the stored value back.
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    key = next(k for k in result["data_schema"].schema if k == CONF_SCAN_INTERVAL)
+    assert key.default() == 120
+
+
+@pytest.mark.parametrize("seconds", [5, 301])
+async def test_options_flow_rejects_out_of_range_interval(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, seconds: int
+) -> None:
+    """Intervals outside 10-300 s are refused, not stored."""
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {CONF_NO_PIN_REQUIRED: False, CONF_EVENT_HOUR_OFFSET: 0, CONF_SCAN_INTERVAL: seconds},
+        )
+    assert CONF_SCAN_INTERVAL not in setup_integration.options

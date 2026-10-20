@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -21,9 +22,14 @@ from custom_components.visonicalarm.api import (
     VisonicError,
 )
 from custom_components.visonicalarm.const import (
+    CONF_EVENT_HOUR_OFFSET,
+    CONF_NO_PIN_REQUIRED,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     ISSUE_PANEL_OFFLINE,
     ISSUE_YAML_DEPRECATED,
+    LEGACY_SCAN_INTERVAL,
 )
 from custom_components.visonicalarm.services import (
     ATTR_CONFIG_ENTRY_ID,
@@ -226,3 +232,88 @@ async def test_diagnostics_redacts_secrets(
     assert diag["entry"]["data"]["user_password"] == "**REDACTED**"
     assert diag["counts"]["devices"] == 13
     assert diag["faulty_devices"] == {"Kitchen": ["INACTIVE", "1_WAY"]}
+
+
+def _entry(hass: HomeAssistant, *, version: int, minor_version: int, options=None):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=ENTRY_DATA,
+        options=options or {},
+        unique_id="ABC123",
+        title="PowerMaster 360R",
+        version=version,
+        minor_version=minor_version,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_migration_keeps_existing_entries_at_10s(
+    hass: HomeAssistant, fake_api: FakeApi
+) -> None:
+    """Entries from before the option keep polling every 10 s, not the new 30 s."""
+    entry = _entry(hass, version=1, minor_version=1)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.version == 1
+    assert entry.minor_version == 2
+    assert entry.options[CONF_SCAN_INTERVAL] == LEGACY_SCAN_INTERVAL
+    assert entry.runtime_data.update_interval == timedelta(seconds=LEGACY_SCAN_INTERVAL)
+
+
+async def test_migration_preserves_other_options(hass: HomeAssistant, fake_api: FakeApi) -> None:
+    """Migration only adds the interval; the user's other options survive."""
+    entry = _entry(
+        hass,
+        version=1,
+        minor_version=1,
+        options={CONF_NO_PIN_REQUIRED: True, CONF_EVENT_HOUR_OFFSET: 2},
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert dict(entry.options) == {
+        CONF_NO_PIN_REQUIRED: True,
+        CONF_EVENT_HOUR_OFFSET: 2,
+        CONF_SCAN_INTERVAL: LEGACY_SCAN_INTERVAL,
+    }
+
+
+async def test_current_entry_without_interval_uses_default(
+    hass: HomeAssistant, fake_api: FakeApi
+) -> None:
+    """An entry already at 1.2 is not migrated, so it polls at the default."""
+    entry = _entry(hass, version=1, minor_version=2)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert CONF_SCAN_INTERVAL not in entry.options
+    assert entry.runtime_data.update_interval == timedelta(seconds=DEFAULT_SCAN_INTERVAL)
+
+
+async def test_migration_refuses_a_future_major_version(
+    hass: HomeAssistant, fake_api: FakeApi
+) -> None:
+    """A downgrade from a newer major version fails cleanly instead of guessing."""
+    entry = _entry(hass, version=2, minor_version=1)
+
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR
+    assert CONF_SCAN_INTERVAL not in entry.options
+
+
+async def test_migrate_entry_rejects_newer_major_directly(
+    hass: HomeAssistant, fake_api: FakeApi
+) -> None:
+    """The handler itself also refuses a newer major version."""
+    from custom_components.visonicalarm import async_migrate_entry
+
+    entry = _entry(hass, version=2, minor_version=1)
+    assert await async_migrate_entry(hass, entry) is False
