@@ -7,7 +7,12 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
-import voluptuous as vol
+try:
+    # Home Assistant 2026.10 replaced voluptuous with probatio, which keeps
+    # the same names. Older releases, which this still supports, lack it.
+    import probatio as vol
+except ImportError:  # pragma: no cover - Home Assistant before 2026.10
+    import voluptuous as vol  # type: ignore[no-redef]
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,

@@ -74,6 +74,8 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
             CONF_EVENT_HOUR_OFFSET, entry.data.get(CONF_EVENT_HOUR_OFFSET, 0)
         )
         self._last_slow_update: datetime | None = None
+        # Set in async_setup_entry once the panel's device is registered.
+        self.panel_device_id: str | None = None
         self._data = VisonicData()
 
     @property

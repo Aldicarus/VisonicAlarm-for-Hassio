@@ -5,10 +5,17 @@ from __future__ import annotations
 import logging
 
 import homeassistant.helpers.config_validation as cv
-import voluptuous as vol
+
+try:
+    # Home Assistant 2026.10 replaced voluptuous with probatio, which keeps
+    # the same names. Older releases, which this still supports, lack it.
+    import probatio as vol
+except ImportError:  # pragma: no cover - Home Assistant before 2026.10
+    import voluptuous as vol  # type: ignore[no-redef]
 from homeassistant.config_entries import SOURCE_IMPORT
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 
@@ -31,6 +38,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import VisonicConfigEntry, VisonicDataUpdateCoordinator
+from .entity import panel_device_info
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -125,6 +133,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: VisonicConfigEntry) -> b
 
     # Per-entry state lives on the entry itself (quality scale: runtime-data).
     entry.runtime_data = coordinator
+
+    # The panel is registered before any platform, so each zone can name it by
+    # device id rather than by the via_device tuple Home Assistant deprecated.
+    panel = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, **panel_device_info(coordinator)
+    )
+    coordinator.panel_device_id = panel.id
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
