@@ -21,10 +21,12 @@ rules:
   appropriate-polling:
     status: done
     comment: >-
-      Two cadences. Arm state and device state poll every 10s, matching what the
-      vendor app does. Troubles, events and the capability endpoints move rarely
-      and poll every 5 minutes, which keeps the request rate down on an API that
-      is rate sensitive.
+      Two cadences. Arm state and device state (three requests: status, alarms,
+      devices) poll every 30s by default, tunable from 10 to 300s in the options
+      flow. Entries created before the option existed are migrated to an
+      explicit 10s, their previous behaviour. Troubles, events and the
+      capability endpoints move rarely and poll every 5 minutes regardless,
+      which keeps the request rate down on an API that is rate sensitive.
   brands:
     status: done
     comment: Icon and logo supplied in brand/, submitted to home-assistant/brands.
@@ -43,7 +45,8 @@ rules:
     comment: >-
       tests/test_config_flow.py covers the happy path, each error branch,
       duplicate panels, YAML import, reauth and reconfigure including the
-      wrong-panel guard.
+      wrong-panel guard, and the options flow including the poll-interval
+      bounds. tests/test_init.py covers the 1.1 -> 1.2 entry migration.
   dependency-transparency:
     status: done
     comment: >-

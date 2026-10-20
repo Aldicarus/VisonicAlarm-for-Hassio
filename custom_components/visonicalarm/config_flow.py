@@ -32,12 +32,17 @@ from .const import (
     CONF_EVENT_HOUR_OFFSET,
     CONF_NO_PIN_REQUIRED,
     CONF_PANEL_ID,
+    CONF_SCAN_INTERVAL,
     CONF_USER_CODE,
     CONF_USER_EMAIL,
     CONF_USER_PASSWORD,
     DEFAULT_HOST,
     DEFAULT_NAME,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    LEGACY_SCAN_INTERVAL,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -97,6 +102,8 @@ class VisonicConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Visonic Alarm."""
 
     VERSION = 1
+    # 1.2: the poll interval became an option (see async_migrate_entry).
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         """Initialise per-flow state."""
@@ -158,6 +165,8 @@ class VisonicConfigFlow(ConfigFlow, domain=DOMAIN):
             options={
                 CONF_NO_PIN_REQUIRED: import_data.get(CONF_NO_PIN_REQUIRED, False),
                 CONF_EVENT_HOUR_OFFSET: import_data.get(CONF_EVENT_HOUR_OFFSET, 0),
+                # YAML users are upgrading from the 10 s era; keep their speed.
+                CONF_SCAN_INTERVAL: LEGACY_SCAN_INTERVAL,
             },
         )
 
@@ -219,6 +228,8 @@ class VisonicOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage integration options."""
         if user_input is not None:
+            # The number selector hands back a float; store whole seconds.
+            user_input[CONF_SCAN_INTERVAL] = int(user_input[CONF_SCAN_INTERVAL])
             return self.async_create_entry(data=user_input)
 
         options = self.config_entry.options
@@ -242,6 +253,18 @@ class VisonicOptionsFlow(OptionsFlow):
                         ),
                     ): NumberSelector(
                         NumberSelectorConfig(min=-24, max=24, step=1, mode=NumberSelectorMode.BOX)
+                    ),
+                    vol.Required(
+                        CONF_SCAN_INTERVAL,
+                        default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=MIN_SCAN_INTERVAL,
+                            max=MAX_SCAN_INTERVAL,
+                            step=1,
+                            unit_of_measurement="s",
+                            mode=NumberSelectorMode.BOX,
+                        )
                     ),
                 }
             ),

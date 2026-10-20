@@ -156,6 +156,9 @@ def mock_entry(hass: HomeAssistant) -> MockConfigEntry:
         data=ENTRY_DATA,
         unique_id="ABC123",
         title="PowerMaster 360R",
+        # A current entry. Migration from older versions is tested separately.
+        version=1,
+        minor_version=2,
     )
     entry.add_to_hass(hass)
     return entry

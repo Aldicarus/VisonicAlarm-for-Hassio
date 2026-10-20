@@ -18,6 +18,7 @@ from .const import (
     CONF_NO_PIN_REQUIRED,
     CONF_PANEL_ID,
     CONF_PARTITION,
+    CONF_SCAN_INTERVAL,
     CONF_USER_CODE,
     CONF_USER_EMAIL,
     CONF_USER_PASSWORD,
@@ -26,6 +27,7 @@ from .const import (
     DEFAULT_PARTITION,
     DOMAIN,
     ISSUE_YAML_DEPRECATED,
+    LEGACY_SCAN_INTERVAL,
     PLATFORMS,
 )
 from .coordinator import VisonicConfigEntry, VisonicDataUpdateCoordinator
@@ -87,6 +89,31 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         severity=ir.IssueSeverity.WARNING,
         translation_key=ISSUE_YAML_DEPRECATED,
     )
+
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: VisonicConfigEntry) -> bool:
+    """Migrate an entry from an older config entry version.
+
+    1.1 -> 1.2: the poll interval became an option, and new entries default to
+    30 s. Entries made before that polled every 10 s, and automations may rely
+    on that speed, so they are given an explicit 10 s rather than inheriting
+    the new default. Nobody's polling changes on upgrade.
+    """
+    if entry.version > 1:
+        # A downgrade from a future major version. Refuse rather than guess.
+        return False
+
+    if entry.minor_version < 2:
+        options = {**entry.options}
+        options.setdefault(CONF_SCAN_INTERVAL, LEGACY_SCAN_INTERVAL)
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+        _LOGGER.debug(
+            "Migrated %s to 1.2, poll interval kept at %s s",
+            entry.title,
+            options[CONF_SCAN_INTERVAL],
+        )
 
     return True
 

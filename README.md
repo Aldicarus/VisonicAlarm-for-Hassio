@@ -122,7 +122,7 @@ while setting up.
 
 ### Options
 
-Via ⚙ on the integration card. Both are Home Assistant-side only — neither
+Via ⚙ on the integration card. All are Home Assistant-side only — none of them
 writes anything to the panel.
 
 - **Arm and disarm without entering the code** — skips the Home Assistant code
@@ -132,6 +132,10 @@ writes anything to the panel.
   should not be able to disarm the alarm.
 - **Event timestamp offset** — only needed if *Last event* times look wrong,
   which happens when the panel clock is in another time zone.
+- **Poll interval** — how often the arm state, triggered state and sensors are
+  checked, from 10 to 300 seconds. The default is **30 seconds**. Each check is
+  three requests to the Visonic cloud, which limits how often it can be asked,
+  so only go lower if an automation needs to react within seconds.
 
 <details>
 <summary>Upgrading from a YAML setup</summary>
@@ -203,10 +207,14 @@ should take a deliberate call, not one stray toggle on a dashboard.
 
 | Every | What |
 | --- | --- |
-| **10 seconds** | Arm state, readiness, device state — matching what the mobile app does |
+| **30 seconds** (adjustable, 10–300) | Arm state, readiness, device state — three requests each time |
 | **5 minutes** | Troubles, alerts, event log, capabilities — these move rarely and the API is rate sensitive |
 
 Arming, disarming and bypassing refresh immediately rather than waiting.
+
+> **Upgrading from 4.2 or earlier?** Nothing changes. Those versions polled every
+> 10 seconds, and existing setups are kept at 10 seconds on upgrade. Only new
+> setups start at 30. Change it any time under **Options**.
 
 ---
 

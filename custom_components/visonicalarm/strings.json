@@ -76,11 +76,13 @@
         "description": "These only affect Home Assistant. Nothing here is written to the panel.",
         "data": {
           "no_pin_required": "Arm and disarm without entering the code",
-          "event_hour_offset": "Event timestamp offset (hours)"
+          "event_hour_offset": "Event timestamp offset (hours)",
+          "scan_interval": "Poll interval (seconds)"
         },
         "data_description": {
           "no_pin_required": "Turn this on to skip the code prompt in Home Assistant, so dashboard buttons and automations can arm or disarm directly. Your keypad PIN is still sent to the panel either way — this only controls whether Home Assistant asks you to type it first. Leave it off if anyone who can reach your dashboard should not be able to disarm the alarm.",
-          "event_hour_offset": "Only needed if the times on the Last event sensor look wrong, which happens when the panel's clock is set to a different time zone. Enter the number of hours to shift them by, positive or negative."
+          "event_hour_offset": "Only needed if the times on the Last event sensor look wrong, which happens when the panel's clock is set to a different time zone. Enter the number of hours to shift them by, positive or negative.",
+          "scan_interval": "How often to check the arm state, whether the alarm is triggered, and each sensor. Each check is three requests to the Visonic cloud, which limits how often it can be asked, so shorter is not free. 30 seconds suits most homes; go down to 10 only if an automation needs to react to arming or a triggered alarm within seconds. Troubles and the event log are checked every 5 minutes whatever this is set to. Arming and disarming from Home Assistant always update straight away."
         }
       }
     }
