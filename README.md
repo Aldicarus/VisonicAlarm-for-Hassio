@@ -82,12 +82,12 @@ Built against **REST API 14.0**.
 
 [![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Nino6689&repository=VisonicAlarm-for-Hassio&category=integration)
 
-Click the button, or add it by hand:
+Click the button, or find it yourself. It's in the HACS default store, so
+there's no custom repository to add:
 
-1. HACS → **Integrations** → ⋮ → **Custom repositories**
-2. Add `https://github.com/Nino6689/VisonicAlarm-for-Hassio`, category
-   **Integration**
-3. Install **Visonic Alarm**, then **restart Home Assistant**
+1. HACS → search for **Visonic Alarm** (this repository,
+   `Nino6689/VisonicAlarm-for-Hassio`)
+2. **Download**, then **restart Home Assistant**
 
 Then add it:
 
