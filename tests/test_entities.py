@@ -8,6 +8,7 @@ import pytest
 from homeassistant.const import ATTR_ENTITY_ID, STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -236,3 +237,74 @@ async def test_non_zone_devices_get_a_fault_entity(
     # Zones keep their own entities and are not duplicated as fault sensors.
     assert "visonic_device_828776" not in by_unique
     assert "visonic_zone_828776" in by_unique
+
+
+def _preregister_3x_kitchen(hass: HomeAssistant, entry: MockConfigEntry, area_id: str) -> None:
+    """Register the Kitchen zone as 3.x left it: no device, area on the entity."""
+    registry = er.async_get(hass)
+    for platform, unique_id in (
+        ("binary_sensor", "visonic_zone_6148586"),
+        ("sensor", 6148586),
+        ("switch", "visonic_bypass_6148586"),
+    ):
+        entity = registry.async_get_or_create(
+            platform,
+            DOMAIN,
+            unique_id,  # type: ignore[arg-type]
+            config_entry=entry,
+        )
+        registry.async_update_entity(entity.entity_id, area_id=area_id)
+
+
+async def test_3x_entity_area_moves_to_the_device(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """An area 3.x users set on a zone entity becomes the zone device's area."""
+    kitchen = ar.async_get(hass).async_create("Kitchen").id
+    _preregister_3x_kitchen(hass, mock_entry, kitchen)
+
+    assert await hass.config_entries.async_setup(mock_entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    zone = registry.async_get(
+        registry.async_get_entity_id("binary_sensor", DOMAIN, "visonic_zone_6148586")
+    )
+    legacy = registry.async_get(registry.async_get_entity_id("sensor", DOMAIN, 6148586))
+    bypass = registry.async_get(
+        registry.async_get_entity_id("switch", DOMAIN, "visonic_bypass_6148586")
+    )
+    device = dr.async_get(hass).async_get(zone.device_id)
+
+    assert device.area_id == kitchen
+    # The unnamed entities follow their device now.
+    assert zone.area_id is None
+    assert legacy.area_id is None
+    # The bypass switch has a name of its own, so its area is left as set.
+    assert bypass.area_id == kitchen
+
+
+async def test_entity_area_kept_when_the_device_is_elsewhere(
+    hass: HomeAssistant, mock_entry: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """If the zone device already sits in another room, nothing is guessed."""
+    areas = ar.async_get(hass)
+    kitchen = areas.async_create("Kitchen").id
+    hallway = areas.async_create("Hallway").id
+    _preregister_3x_kitchen(hass, mock_entry, kitchen)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=mock_entry.entry_id,
+        identifiers={(DOMAIN, "ABC123_zone_6148586")},
+    )
+    dr.async_get(hass).async_update_device(device.id, area_id=hallway)
+
+    assert await hass.config_entries.async_setup(mock_entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    zone = registry.async_get(
+        registry.async_get_entity_id("binary_sensor", DOMAIN, "visonic_zone_6148586")
+    )
+    assert zone.device_id == device.id
+    assert zone.area_id == kitchen
+    assert dr.async_get(hass).async_get(device.id).area_id == hallway

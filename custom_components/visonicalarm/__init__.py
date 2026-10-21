@@ -14,8 +14,9 @@ except ImportError:  # pragma: no cover - Home Assistant before 2026.10
     import voluptuous as vol  # type: ignore[no-redef]
 from homeassistant.config_entries import SOURCE_IMPORT
 from homeassistant.const import CONF_HOST, CONF_NAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 
@@ -142,8 +143,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: VisonicConfigEntry) -> b
     coordinator.panel_device_id = panel.id
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _async_move_entity_areas_to_devices(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+@callback
+def _async_move_entity_areas_to_devices(hass: HomeAssistant, entry: VisonicConfigEntry) -> None:
+    """Give an area set on an unnamed entity to its device instead.
+
+    Before 4.0 the zones had no devices, so the only way to put a zone in a
+    room was to set the area on the entity. Those entities now stand for
+    their zone's device and have no name of their own, and Home Assistant
+    2026.10 raises a repair for each unnamed entity carrying its own area.
+    Moving the area to the device keeps the zone in its room and clears it.
+    """
+    entities = er.async_get(hass)
+    devices = dr.async_get(hass)
+    for entity in er.async_entries_for_config_entry(entities, entry.entry_id):
+        if (
+            entity.area_id is None
+            or entity.device_id is None
+            or entity.name
+            or entity.original_name
+        ):
+            continue
+        if (device := devices.async_get(entity.device_id)) is None:
+            continue
+        if device.area_id is None:
+            devices.async_update_device(device.id, area_id=entity.area_id)
+        elif device.area_id != entity.area_id:
+            # Two different rooms. Which one is right is the user's call.
+            continue
+        entities.async_update_entity(entity.entity_id, area_id=None)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: VisonicConfigEntry) -> None:
