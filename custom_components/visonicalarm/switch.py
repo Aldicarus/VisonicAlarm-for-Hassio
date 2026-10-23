@@ -43,6 +43,8 @@ async def async_setup_entry(
                 or device.id in known
                 or device.zone_number is None
                 or device.bypassed is None
+                # A Neo refuses to bypass its 24-hour loops: no switch for them.
+                or (device.is_wired_zone and device.is_tamper_zone)
             ):
                 continue
             known.add(device.id)

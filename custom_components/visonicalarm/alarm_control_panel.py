@@ -25,6 +25,8 @@ from .const import (
     STATE_DISARM,
     STATE_ENTRY_DELAY,
     STATE_HOME,
+    STATE_NIGHT,
+    STATE_STAY,
 )
 from .coordinator import VisonicConfigEntry, VisonicDataUpdateCoordinator
 from .entity import VisonicEntity
@@ -34,6 +36,8 @@ PARALLEL_UPDATES = 1
 STATE_MAP = {
     STATE_AWAY: AlarmControlPanelState.ARMED_AWAY,
     STATE_HOME: AlarmControlPanelState.ARMED_HOME,
+    STATE_STAY: AlarmControlPanelState.ARMED_HOME,
+    STATE_NIGHT: AlarmControlPanelState.ARMED_NIGHT,
     STATE_DISARM: AlarmControlPanelState.DISARMED,
     STATE_ARMING: AlarmControlPanelState.ARMING,
     STATE_ENTRY_DELAY: AlarmControlPanelState.PENDING,
@@ -79,11 +83,32 @@ class VisonicAlarmPanel(VisonicEntity, AlarmControlPanelEntity):
         }
         if not names:
             names = {STATE_HOME, STATE_AWAY}
-        if STATE_HOME in names:
+        if names & {STATE_HOME, STATE_STAY}:
             features |= AlarmControlPanelEntityFeature.ARM_HOME
         if STATE_AWAY in names:
             features |= AlarmControlPanelEntityFeature.ARM_AWAY
+        if STATE_NIGHT in names:
+            features |= AlarmControlPanelEntityFeature.ARM_NIGHT
         return features
+
+    @property
+    def _settable_states(self) -> set[str]:
+        """Arm states the panel accepts as commands, per ``panel_info.state_sets``."""
+        state_sets = self.coordinator.data.panel_info.get("state_sets") or {}
+        return {
+            entry.get("name")
+            for states in state_sets.values()
+            for entry in states
+            if isinstance(entry, dict) and entry.get("settable")
+        }
+
+    @property
+    def _arm_home_command(self) -> str:
+        """What "arm home" is called on this panel: HOME on Visonic, STAY on a Neo."""
+        settable = self._settable_states
+        if STATE_STAY in settable and STATE_HOME not in settable:
+            return STATE_STAY
+        return STATE_HOME
 
     @property
     def _no_pin_required(self) -> bool:
@@ -168,7 +193,13 @@ class VisonicAlarmPanel(VisonicEntity, AlarmControlPanelEntity):
         """Send arm home command."""
         self._check_code(code)
         self._check_ready()
-        await self._async_set(STATE_HOME)
+        await self._async_set(self._arm_home_command)
+
+    async def async_alarm_arm_night(self, code: str | None = None) -> None:
+        """Send arm night command (DSC PowerSeries Neo only)."""
+        self._check_code(code)
+        self._check_ready()
+        await self._async_set(STATE_NIGHT)
 
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
         """Send arm away command."""

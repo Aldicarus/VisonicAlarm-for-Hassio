@@ -20,10 +20,14 @@ from .const import (
     STATE_AWAY,
     STATE_DISARM,
     STATE_HOME,
+    STATE_NIGHT,
+    STATE_STAY,
     SUBTYPE_CURTAIN,
     SUBTYPE_MOTION,
     ZONE_24H,
     ZONE_INTERIOR,
+    ZONE_NIGHT,
+    ZONE_STAY_AWAY,
 )
 from .coordinator import VisonicConfigEntry, VisonicDataUpdateCoordinator
 from .entity import VisonicEntity, VisonicZoneEntity
@@ -139,7 +143,12 @@ async def async_setup_entry(
         for device in coordinator.data.devices:
             if device.id is None or device.id in known:
                 continue
-            if device.is_contact:
+            if device.is_wired_zone:
+                # DSC PowerSeries Neo hardwired zones publish OPENED live,
+                # armed or not, so they get a real state (see VisonicZoneWired).
+                known.add(device.id)
+                new.append(VisonicZoneWired(coordinator, device.id))
+            elif device.is_contact:
                 known.add(device.id)
                 new.append(VisonicZoneContact(coordinator, device.id))
             elif SUBTYPE_MOTION in device.subtype or SUBTYPE_CURTAIN in device.subtype:
@@ -241,6 +250,45 @@ class VisonicZoneContact(VisonicZoneBinarySensor):
         return device.state == "opened"
 
 
+class VisonicZoneWired(VisonicZoneBinarySensor):
+    """A hardwired zone on a DSC PowerSeries Neo.
+
+    The Neo publishes ``OPENED`` the moment a wired zone trips and clears it a
+    few seconds later, whether or not the system is armed (measured on an
+    HS2064 through PowerManage). The panel does not say what kind of sensor is
+    wired to the zone, so these default to motion, which suits a PIR-only
+    installation; a door contact can be relabelled with "Show as" in the entity
+    settings. 24-hour zones are tamper loops.
+
+    Polling still applies: a trip shorter than the poll interval is missed.
+    """
+
+    @property
+    def device_class(self) -> BinarySensorDeviceClass:
+        """Tamper for 24-hour loops, motion for everything else."""
+        device = self.device
+        if device is not None and device.is_tamper_zone:
+            return BinarySensorDeviceClass.TAMPER
+        return BinarySensorDeviceClass.MOTION
+
+    @property
+    def is_on(self) -> bool | None:
+        """True while the zone is tripped."""
+        device = self.device
+        if device is None or device.state is None:
+            return None
+        return device.state == "opened"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Zone attributes plus whether the zone is armed in the current mode."""
+        attrs = dict(super().extra_state_attributes)
+        device = self.device
+        if device is not None:
+            attrs["armed"] = _zone_active(self.coordinator.data.state, device)
+        return attrs
+
+
 class VisonicZoneMotion(VisonicZoneBinarySensor):
     """A motion or curtain detector.
 
@@ -261,12 +309,22 @@ class VisonicZoneMotion(VisonicZoneBinarySensor):
 
 
 def _zone_active(alarm_state: str | None, device: VisonicDevice) -> bool | None:
-    """Whether a zone participates in the given arm mode."""
+    """Whether a zone participates in the given arm mode.
+
+    Visonic panels bypass INTERIOR zones when armed HOME. A DSC PowerSeries Neo
+    has two partial modes: STAY drops its NIGHT-type zones (the paths people
+    walk at night) and every ``*_STAY_AWAY`` zone; NIGHT re-arms the
+    ``*_STAY_AWAY`` zones and keeps only the NIGHT-type ones bypassed.
+    """
     zone = device.zone_type
     if alarm_state in (STATE_DISARM, STATE_ARMING):
         return ZONE_24H in zone
     if alarm_state == STATE_HOME:
         return ZONE_INTERIOR not in zone
+    if alarm_state == STATE_STAY:
+        return ZONE_24H in zone or (zone != ZONE_NIGHT and ZONE_STAY_AWAY not in zone)
+    if alarm_state == STATE_NIGHT:
+        return zone != ZONE_NIGHT
     if alarm_state in (STATE_AWAY, "DISARMING"):
         return True
     return None

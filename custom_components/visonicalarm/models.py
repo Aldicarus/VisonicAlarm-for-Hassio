@@ -9,6 +9,7 @@ from typing import Any
 from .const import (
     SUBTYPE_CONTACT,
     SUBTYPE_KEYFOB,
+    ZONE_24H,
 )
 
 
@@ -153,14 +154,25 @@ class VisonicDevice:
         return SUBTYPE_CONTACT in self.subtype
 
     @property
+    def is_wired_zone(self) -> bool:
+        """Whether this is a hardwired zone on a DSC PowerSeries Neo (``HW_ZONE_*``)."""
+        return self.is_zone and self.subtype.startswith("HW_ZONE")
+
+    @property
+    def is_tamper_zone(self) -> bool:
+        """Whether this zone is a 24-hour loop (tamper or supervisory)."""
+        return ZONE_24H in self.zone_type
+
+    @property
     def state(self) -> str | None:
         """Contact state derived from device warnings.
 
-        Only contact-style devices report anything usable. Motion detectors
-        expose nothing here, which is why their entities derive state from the
-        arm mode instead.
+        Only contact-style devices report anything usable. Visonic motion
+        detectors expose nothing here, which is why their entities derive state
+        from the arm mode instead. A Neo's hardwired zones do publish ``OPENED``
+        live, so they are included.
         """
-        if self.is_contact or SUBTYPE_KEYFOB in self.subtype:
+        if self.is_contact or self.is_wired_zone or SUBTYPE_KEYFOB in self.subtype:
             if any("OPENED" in str(w) for w in self.warnings):
                 return "opened"
             return "closed"

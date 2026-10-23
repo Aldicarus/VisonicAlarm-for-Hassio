@@ -21,6 +21,7 @@ from .api import (
     VisonicError,
 )
 from .const import (
+    ARMED_STATES,
     CONF_APP_ID,
     CONF_EVENT_HOUR_OFFSET,
     CONF_PANEL_ID,
@@ -35,8 +36,9 @@ from .const import (
     SLOW_SCAN_INTERVAL,
     STATE_ALARM,
     STATE_ARMING,
-    STATE_AWAY,
-    STATE_HOME,
+    STATE_ENTRY_DELAY,
+    STATUS_ENTRY,
+    STATUS_EXIT,
 )
 from .models import VisonicData, VisonicDevice, VisonicEvent
 
@@ -158,19 +160,21 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
         data.connected = status.get("connected")
 
         data.alarms = await self.api.async_get_alarms()
+        state = partition.get("state")
+        status = partition.get("status")
         if data.alarms:
             data.alarm_active = True
-            state = partition.get("state")
-            data.state = STATE_ALARM if state in (STATE_HOME, STATE_AWAY) else state
+            data.state = STATE_ALARM if state in ARMED_STATES else state
         else:
             data.alarm_active = False
-            if partition.get("status") == "EXIT" and partition.get("state") in (
-                STATE_AWAY,
-                STATE_HOME,
-            ):
+            if status == STATUS_EXIT and state in ARMED_STATES:
                 data.state = STATE_ARMING
+            elif status == STATUS_ENTRY and state in ARMED_STATES:
+                # A Neo stays "armed" through the entry delay and flags it in
+                # ``status``; Visonic panels report it as a state of its own.
+                data.state = STATE_ENTRY_DELAY
             else:
-                data.state = partition.get("state")
+                data.state = state
 
         data.devices = [
             VisonicDevice(raw)

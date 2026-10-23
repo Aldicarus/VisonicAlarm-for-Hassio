@@ -51,10 +51,27 @@ STATE_DISARM: Final = "DISARM"
 STATE_ARMING: Final = "ARMING"
 STATE_ENTRY_DELAY: Final = "ENTRYDELAY"
 STATE_ALARM: Final = "ALARM"
+# DSC PowerSeries Neo panels reached through PowerManage (the Connect Alarm
+# app) name their arm modes differently: STAY is the Neo's arm-home and NIGHT
+# is a third mode with no Visonic equivalent. Both arrive in ``partitions[].state``.
+STATE_STAY: Final = "STAY"
+STATE_NIGHT: Final = "NIGHT"
+# Every state that counts as armed, whichever family the panel belongs to.
+ARMED_STATES: Final = (STATE_AWAY, STATE_HOME, STATE_STAY, STATE_NIGHT)
+# ``partitions[].status`` values while a state is settling. Visonic reports the
+# entry delay as a *state* (``ENTRYDELAY``); a Neo keeps the armed state and
+# sets ``status`` to ``ENTRY`` instead.
+STATUS_EXIT: Final = "EXIT"
+STATUS_ENTRY: Final = "ENTRY"
 
 # Zone types that are only live while the system is armed away.
 ZONE_INTERIOR: Final = "INTERIOR"
 ZONE_24H: Final = "24H"
+# DSC PowerSeries Neo zone types that change with the partial arm modes. NIGHT
+# zones (the paths people walk at night) are bypassed in both STAY and NIGHT;
+# the ``*_STAY_AWAY`` zones are bypassed in STAY and re-armed in NIGHT.
+ZONE_NIGHT: Final = "NIGHT"
+ZONE_STAY_AWAY: Final = "STAY_AWAY"
 
 # Device subtype fragments used to classify enrolled devices.
 SUBTYPE_CONTACT: Final = "CONTACT"

@@ -3,6 +3,15 @@
   Visonic Alarm for Home Assistant
 </h1>
 
+> **This fork adds DSC PowerSeries Neo support** for panels reached through
+> PowerManage (the *Connect Alarm* app): `STAY` is shown as armed home and
+> `NIGHT` as armed night, each with its command; the exit and entry delays
+> become *arming* and *pending* in every mode; an alarm in `STAY` or `NIGHT`
+> reads as *triggered*; and the hardwired zones (`HW_ZONE_*`), which the Neo
+> reports live, become motion sensors with an `armed` attribute. Visonic
+> panels behave exactly as upstream. Upstream:
+> [Nino6689/VisonicAlarm-for-Hassio](https://github.com/Nino6689/VisonicAlarm-for-Hassio).
+
 <p align="center">
   Arm, disarm and monitor a <b>Visonic</b>, <b>Bentel</b> or <b>Tyco</b> alarm —<br>
   plus the panel-health data your alarm has always reported and nothing ever showed you.
