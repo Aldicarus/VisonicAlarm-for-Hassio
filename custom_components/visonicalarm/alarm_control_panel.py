@@ -96,10 +96,10 @@ class VisonicAlarmPanel(VisonicEntity, AlarmControlPanelEntity):
         """Arm states the panel accepts as commands, per ``panel_info.state_sets``."""
         state_sets = self.coordinator.data.panel_info.get("state_sets") or {}
         return {
-            entry.get("name")
+            str(entry["name"])
             for states in state_sets.values()
             for entry in states
-            if isinstance(entry, dict) and entry.get("settable")
+            if isinstance(entry, dict) and entry.get("settable") and entry.get("name")
         }
 
     @property

@@ -6,9 +6,11 @@ armed state during the exit and entry delays and flags them in ``status``.
 """
 
 import copy
+from datetime import timedelta
 from typing import Any
 from unittest.mock import patch
 
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.alarm_control_panel import AlarmControlPanelEntityFeature
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
@@ -95,6 +97,14 @@ async def test_neo_exit_delay_is_arming_in_every_mode(
         assert hass.states.get(PANEL).state == "arming", mode
 
 
+async def test_neo_exit_delay_from_disarm_is_arming(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """Armed from disarm, a Neo says DISARM + EXIT for the first seconds of the delay."""
+    await _neo(hass, setup_integration, fake_api, state="DISARM", status="EXIT")
+    assert hass.states.get(PANEL).state == "arming"
+
+
 async def test_neo_entry_delay_is_pending(
     hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeApi
 ) -> None:
@@ -150,6 +160,112 @@ async def test_visonic_panels_still_arm_home_with_home(
         blocking=True,
     )
     assert fake_api.set_state_calls == ["HOME"]
+
+
+async def _set_partition(
+    hass: HomeAssistant, entry: MockConfigEntry, fake_api: FakeApi, **partition: Any
+) -> None:
+    """Change what the cloud reports and poll it once."""
+    fake_api.status["partitions"][0].update(partition)
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+
+async def _arm_night(hass: HomeAssistant) -> None:
+    await hass.services.async_call(
+        "alarm_control_panel",
+        "alarm_arm_night",
+        {ATTR_ENTITY_ID: PANEL, "code": "1234"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+
+async def test_arm_command_shows_arming_until_the_cloud_catches_up(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """The cloud serves the old state for a while after an arm command.
+
+    Meanwhile the panel is arming, and a dashboard showing "disarmed" would
+    offer every mode again.
+    """
+    await _neo(hass, setup_integration, fake_api, state="DISARM")
+    await _arm_night(hass)
+    assert fake_api.set_state_calls == ["NIGHT"]
+    assert hass.states.get(PANEL).state == "arming"
+    await _set_partition(hass, setup_integration, fake_api)  # still DISARM
+    assert hass.states.get(PANEL).state == "arming"
+    await _set_partition(hass, setup_integration, fake_api, status="EXIT")
+    assert hass.states.get(PANEL).state == "arming"
+    await _set_partition(hass, setup_integration, fake_api, state="NIGHT", status="EXIT")
+    assert hass.states.get(PANEL).state == "arming"
+    await _set_partition(hass, setup_integration, fake_api, state="NIGHT", status="")
+    assert hass.states.get(PANEL).state == "armed_night"
+
+
+async def test_arm_command_that_never_shows_up_gives_way(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    fake_api: FakeApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """If the cloud never moves, the panel goes back to what it reports."""
+    await _neo(hass, setup_integration, fake_api, state="DISARM")
+    await _arm_night(hass)
+    freezer.tick(timedelta(seconds=31))
+    await _set_partition(hass, setup_integration, fake_api)
+    assert hass.states.get(PANEL).state == "disarmed"
+
+
+async def test_switching_armed_modes_shows_arming_until_the_new_one(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """From STAY to NIGHT the cloud keeps STAY, then STAY + EXIT, then NIGHT."""
+    await _neo(hass, setup_integration, fake_api, state="STAY")
+    await _arm_night(hass)
+    assert hass.states.get(PANEL).state == "arming"
+    await _set_partition(hass, setup_integration, fake_api)  # still STAY
+    assert hass.states.get(PANEL).state == "arming"
+    await _set_partition(hass, setup_integration, fake_api, status="EXIT")
+    assert hass.states.get(PANEL).state == "arming"
+    await _set_partition(hass, setup_integration, fake_api, state="NIGHT", status="")
+    assert hass.states.get(PANEL).state == "armed_night"
+
+
+async def test_disarm_command_is_not_anticipated(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """Disarmed is only shown once the cloud says so."""
+    await _neo(hass, setup_integration, fake_api, state="NIGHT")
+    await hass.services.async_call(
+        "alarm_control_panel",
+        "alarm_disarm",
+        {ATTR_ENTITY_ID: PANEL, "code": "1234"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert fake_api.set_state_calls == ["DISARM"]
+    assert hass.states.get(PANEL).state == "armed_night"
+
+
+async def test_delays_poll_fast_and_then_settle(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """An exit or entry delay polls every 10 s; a settled panel at the configured rate."""
+    await _neo(hass, setup_integration, fake_api, state="NIGHT")
+    coordinator = setup_integration.runtime_data
+    configured = coordinator.update_interval
+    assert configured > timedelta(seconds=10)
+    await _set_partition(hass, setup_integration, fake_api, status="EXIT")
+    assert coordinator.update_interval == timedelta(seconds=10)
+    await _set_partition(hass, setup_integration, fake_api, status="")
+    assert coordinator.update_interval == configured
+    await _set_partition(hass, setup_integration, fake_api, status="ENTRY")
+    assert coordinator.update_interval == timedelta(seconds=10)
+    await _set_partition(hass, setup_integration, fake_api, state="DISARM", status="")
+    assert coordinator.update_interval == configured
+    await _arm_night(hass)
+    assert coordinator.update_interval == timedelta(seconds=10)
 
 
 def _wired(

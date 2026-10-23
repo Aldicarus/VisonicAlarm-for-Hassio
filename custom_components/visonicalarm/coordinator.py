@@ -13,6 +13,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import (
     VisonicApi,
@@ -33,6 +34,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     ISSUE_PANEL_OFFLINE,
+    MIN_SCAN_INTERVAL,
     SLOW_SCAN_INTERVAL,
     STATE_ALARM,
     STATE_ARMING,
@@ -43,6 +45,15 @@ from .const import (
 from .models import VisonicData, VisonicDevice, VisonicEvent
 
 _LOGGER = logging.getLogger(__name__)
+
+# While an exit or entry delay runs the panel is about to change state and the
+# cloud is the only way to see it: poll at the fastest allowed interval until it
+# settles, then go back to the configured one.
+DELAY_SCAN_INTERVAL = timedelta(seconds=MIN_SCAN_INTERVAL)
+# After an accepted arm command the cloud keeps serving the previous state for a
+# while (10-15 s on a DSC Neo, measured). For that long the panel shows ARMING
+# rather than the state it is leaving, which a dashboard would offer to change.
+ARM_COMMAND_GRACE = timedelta(seconds=30)
 
 type VisonicConfigEntry = ConfigEntry[VisonicDataUpdateCoordinator]
 
@@ -76,6 +87,9 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
             CONF_EVENT_HOUR_OFFSET, entry.data.get(CONF_EVENT_HOUR_OFFSET, 0)
         )
         self._last_slow_update: datetime | None = None
+        self._base_interval = self.update_interval
+        # (when an arm command was accepted, the panel state it was sent from)
+        self._arm_sent: tuple[datetime, str | None] | None = None
         # Set in async_setup_entry once the panel's device is registered.
         self.panel_device_id: str | None = None
         self._data = VisonicData()
@@ -161,20 +175,35 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
 
         data.alarms = await self.api.async_get_alarms()
         state = partition.get("state")
-        status = partition.get("status")
+        delay = partition.get("status")
         if data.alarms:
             data.alarm_active = True
             data.state = STATE_ALARM if state in ARMED_STATES else state
         else:
             data.alarm_active = False
-            if status == STATUS_EXIT and state in ARMED_STATES:
+            if delay == STATUS_EXIT:
+                # Any exit delay is arming. A Neo armed from disarm reports
+                # DISARM + EXIT for the first seconds of it, then the new mode +
+                # EXIT; switching between armed modes keeps the old one + EXIT.
                 data.state = STATE_ARMING
-            elif status == STATUS_ENTRY and state in ARMED_STATES:
+            elif delay == STATUS_ENTRY and state in ARMED_STATES:
                 # A Neo stays "armed" through the entry delay and flags it in
                 # ``status``; Visonic panels report it as a state of its own.
                 data.state = STATE_ENTRY_DELAY
             else:
                 data.state = state
+
+        if self._arm_sent is not None:
+            sent_at, before = self._arm_sent
+            if (
+                data.state == before
+                and not data.alarm_active
+                and dt_util.utcnow() - sent_at < ARM_COMMAND_GRACE
+            ):
+                data.state = STATE_ARMING
+            else:
+                self._arm_sent = None
+        self._set_poll_rate()
 
         data.devices = [
             VisonicDevice(raw)
@@ -239,7 +268,24 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
             translation_placeholders={"panel": self._data.alias or "Visonic Alarm"},
         )
 
+    def _set_poll_rate(self) -> None:
+        """Poll fast while a delay runs, at the configured rate otherwise."""
+        moving = self._data.state in (STATE_ARMING, STATE_ENTRY_DELAY)
+        self.update_interval = DELAY_SCAN_INTERVAL if moving else self._base_interval
+
     async def async_set_state(self, state: str) -> None:
-        """Send an arm or disarm command, then refresh immediately."""
+        """Send an arm or disarm command, then refresh immediately.
+
+        An accepted arm command shows ARMING straight away and keeps it until
+        the cloud catches up (see ARM_COMMAND_GRACE). Disarming is not
+        anticipated: it takes effect at once, and showing it early would claim
+        the panel is off before it is.
+        """
+        before = self._data.state
         await self.api.async_set_state(state)
+        if state in ARMED_STATES and state != before:
+            self._arm_sent = (dt_util.utcnow(), before)
+            self._data.state = STATE_ARMING
+            self._set_poll_rate()
+            self.async_set_updated_data(self._data)
         await self.async_request_refresh()
