@@ -58,6 +58,10 @@ class VisonicAlarmPanel(VisonicEntity, AlarmControlPanelEntity):
     """The alarm panel itself."""
 
     _attr_name = None
+    # Only for the state names. In the house this integration was forked for,
+    # the arm-home mode (STAY on a DSC Neo) is the "Jardí" mode: night with the
+    # garden zone left out. See translations.
+    _attr_translation_key = "panel"
 
     def __init__(self, coordinator: VisonicDataUpdateCoordinator) -> None:
         """Initialise the panel entity."""

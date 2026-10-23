@@ -88,6 +88,13 @@
     }
   },
   "entity": {
+    "alarm_control_panel": {
+      "panel": {
+        "state": {
+          "armed_home": "Armed Jardí"
+        }
+      }
+    },
     "binary_sensor": {
       "cloud_connection": {
         "name": "Cloud connection"

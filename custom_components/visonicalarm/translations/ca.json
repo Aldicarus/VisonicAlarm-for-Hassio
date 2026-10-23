@@ -1,0 +1,11 @@
+{
+  "entity": {
+    "alarm_control_panel": {
+      "panel": {
+        "state": {
+          "armed_home": "Activada, mode jardí"
+        }
+      }
+    }
+  }
+}

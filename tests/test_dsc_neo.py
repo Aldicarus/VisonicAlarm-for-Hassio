@@ -15,6 +15,7 @@ from homeassistant.components.alarm_control_panel import AlarmControlPanelEntity
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.translation import async_get_translations
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.visonicalarm.const import DOMAIN
@@ -353,3 +354,18 @@ async def test_neo_wired_zone_says_whether_it_is_armed(
     await _neo(hass, setup_integration, fake_api)
     assert armed("visonic_zone_9002") is False
     assert armed("visonic_zone_9003") is True
+
+
+async def test_arm_home_is_called_jardi(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """The arm-home state carries the name of the house mode it serves, in every language."""
+    assert er.async_get(hass).async_get(PANEL).translation_key == "panel"
+    key = f"component.{DOMAIN}.entity.alarm_control_panel.panel.state.armed_home"
+    for lang, text in (
+        ("en", "Armed Jardí"),
+        ("ca", "Activada, mode jardí"),
+        ("es", "Armada, modo Jardí"),
+    ):
+        translations = await async_get_translations(hass, lang, "entity", {DOMAIN})
+        assert translations[key] == text, lang
