@@ -229,6 +229,10 @@ class VisonicData:
     """Everything one poll cycle knows about the alarm system."""
 
     state: str | None = None
+    # The arm mode the panel is in or heading to (one of ARMED_STATES), also
+    # through exit and entry delays and an alarm, when ``state`` only says
+    # ARMING, ENTRYDELAY or ALARM. None when disarmed.
+    armed_mode: str | None = None
     ready: bool | None = None
     connected: bool | None = None
     alarm_active: bool = False

@@ -45,6 +45,12 @@ STATE_MAP = {
 }
 
 
+def _state_name(panel_state: str | None) -> str | None:
+    """Home Assistant's name for a panel state, as plain text."""
+    mapped = STATE_MAP.get(panel_state or "")
+    return mapped.value if mapped else None
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: VisonicConfigEntry,
@@ -164,6 +170,10 @@ class VisonicAlarmPanel(VisonicEntity, AlarmControlPanelEntity):
             "trouble_count": len(data.troubles),
             "trouble_types": [t.get("trouble_type") for t in data.troubles],
             "changed_timestamp": event.timestamp if event else None,
+            # The arm mode behind arming, pending and triggered too, in the
+            # entity's own state names: automations need to know whether an
+            # entry delay or an alarm comes from away or from night.
+            "armed_mode": _state_name(data.armed_mode),
         }
 
     def _check_code(self, code: str | None) -> None:

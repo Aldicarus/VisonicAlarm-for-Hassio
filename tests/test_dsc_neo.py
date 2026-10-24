@@ -369,3 +369,45 @@ async def test_arm_home_is_called_jardi(
     ):
         translations = await async_get_translations(hass, lang, "entity", {DOMAIN})
         assert translations[key] == text, lang
+
+
+def _armed_mode(hass: HomeAssistant) -> str | None:
+    return hass.states.get(PANEL).attributes.get("armed_mode")
+
+
+async def test_armed_mode_survives_entry_delay_and_alarm(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """Through an entry delay or an alarm the state hides the mode; the attribute keeps it."""
+    await _neo(hass, setup_integration, fake_api, state="AWAY", status="ENTRY")
+    assert hass.states.get(PANEL).state == "pending"
+    assert _armed_mode(hass) == "armed_away"
+    await _neo(hass, setup_integration, fake_api, state="NIGHT", status="ENTRY")
+    assert _armed_mode(hass) == "armed_night"
+    with patch.object(fake_api, "async_get_alarms", return_value=[{"id": 1}]):
+        await _neo(hass, setup_integration, fake_api, state="AWAY")
+    assert hass.states.get(PANEL).state == "triggered"
+    assert _armed_mode(hass) == "armed_away"
+    await _neo(hass, setup_integration, fake_api, state="STAY")
+    assert _armed_mode(hass) == "armed_home"
+    await _neo(hass, setup_integration, fake_api, state="DISARM")
+    assert _armed_mode(hass) is None
+
+
+async def test_armed_mode_is_the_target_while_an_arm_command_runs(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeApi
+) -> None:
+    """From STAY to NIGHT the partition says STAY through the exit delay: the target is NIGHT."""
+    await _neo(hass, setup_integration, fake_api, state="STAY")
+    await _arm_night(hass)
+    assert _armed_mode(hass) == "armed_night"
+    await _set_partition(hass, setup_integration, fake_api)  # still STAY
+    assert _armed_mode(hass) == "armed_night"
+    await _set_partition(hass, setup_integration, fake_api, status="EXIT")
+    assert _armed_mode(hass) == "armed_night"
+    await _set_partition(hass, setup_integration, fake_api, state="NIGHT", status="")
+    assert _armed_mode(hass) == "armed_night"
+    await _neo(hass, setup_integration, fake_api, state="DISARM")
+    await _arm_night(hass)
+    await _set_partition(hass, setup_integration, fake_api, status="EXIT")  # DISARM + EXIT
+    assert _armed_mode(hass) == "armed_night"

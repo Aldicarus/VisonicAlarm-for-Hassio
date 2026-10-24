@@ -54,6 +54,9 @@ DELAY_SCAN_INTERVAL = timedelta(seconds=MIN_SCAN_INTERVAL)
 # while (10-15 s on a DSC Neo, measured). For that long the panel shows ARMING
 # rather than the state it is leaving, which a dashboard would offer to change.
 ARM_COMMAND_GRACE = timedelta(seconds=30)
+# How long the target of an accepted arm command counts as the arm mode while
+# the panel is still arming: the exit delay is 40 s on a Neo, plus the cloud.
+ARM_TARGET_TIMEOUT = timedelta(seconds=120)
 
 type VisonicConfigEntry = ConfigEntry[VisonicDataUpdateCoordinator]
 
@@ -90,6 +93,8 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
         self._base_interval = self.update_interval
         # (when an arm command was accepted, the panel state it was sent from)
         self._arm_sent: tuple[datetime, str | None] | None = None
+        # (when an arm command was accepted, the mode it asked for)
+        self._arm_target: tuple[datetime, str] | None = None
         # Set in async_setup_entry once the panel's device is registered.
         self.panel_device_id: str | None = None
         self._data = VisonicData()
@@ -203,6 +208,7 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
                 data.state = STATE_ARMING
             else:
                 self._arm_sent = None
+        data.armed_mode = self._armed_mode(state)
         self._set_poll_rate()
 
         data.devices = [
@@ -268,6 +274,22 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
             translation_placeholders={"panel": self._data.alias or "Visonic Alarm"},
         )
 
+    def _armed_mode(self, partition_state: str | None) -> str | None:
+        """Work out the arm mode behind the current state, delays and alarm included.
+
+        While an arm command is under way, its target: switching between armed
+        modes, the partition keeps naming the old one through the exit delay,
+        and arming from disarm it says DISARM for the first seconds. Otherwise
+        the partition's own state, which a Neo keeps through the entry delay
+        and an alarm.
+        """
+        if self._arm_target is not None:
+            sent_at, target = self._arm_target
+            if self._data.state == STATE_ARMING and dt_util.utcnow() - sent_at < ARM_TARGET_TIMEOUT:
+                return target
+            self._arm_target = None
+        return partition_state if partition_state in ARMED_STATES else None
+
     def _set_poll_rate(self) -> None:
         """Poll fast while a delay runs, at the configured rate otherwise."""
         moving = self._data.state in (STATE_ARMING, STATE_ENTRY_DELAY)
@@ -283,9 +305,13 @@ class VisonicDataUpdateCoordinator(DataUpdateCoordinator[VisonicData]):
         """
         before = self._data.state
         await self.api.async_set_state(state)
-        if state in ARMED_STATES and state != before:
+        if state not in ARMED_STATES:
+            self._arm_target = None
+        elif state != before:
             self._arm_sent = (dt_util.utcnow(), before)
+            self._arm_target = (dt_util.utcnow(), state)
             self._data.state = STATE_ARMING
+            self._data.armed_mode = state
             self._set_poll_rate()
             self.async_set_updated_data(self._data)
         await self.async_request_refresh()
